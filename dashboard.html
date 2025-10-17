@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>IoT GPIO Bidirectional Dashboard</title>
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <style>
+    body{font-family:Arial,Helvetica,sans-serif;background:#0f172a;color:#eef2ff;padding:20px;text-align:center;}
+    h1{color:#38bdf8}
+    .status{display:inline-block;padding:8px 14px;border-radius:8px;margin-bottom:12px}
+    .connected{background:#10b981;color:#00210b} .disconnected{background:#ef4444;color:#300}
+    .grid{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;max-width:1000px;margin:20px auto}
+    .card{background:#1e293b;padding:16px;border-radius:10px;width:220px;box-shadow:0 6px 18px rgba(0,0,0,.4)}
+    .title{color:#fbbf24;font-weight:bold;margin-bottom:8px}
+    .pin{font-size:20px;color:#38bdf8;margin-bottom:8px}
+    .btn{padding:8px 14px;margin:6px;border-radius:8px;border:0;background:#38bdf8;color:#fff;cursor:pointer}
+    .btn.off{background:#ef4444}
+    .small{font-size:12px;color:#94a3b8;margin-top:8px}
+    .logs{max-width:1000px;margin:20px auto;text-align:left;background:#111827;color:#e6eef8;padding:12px;border-radius:8px;min-height:80px;overflow:auto;font-family:monospace;font-size:12px}
+  </style>
+</head>
+<body>
+  <h1>IoT GPIO Control (Bidirectional)</h1>
+  <div id="conn" class="status disconnected">❌ Disconnected</div>
+
+  <div style="margin-top:10px">
+    <label><strong>Device:</strong> <span id="deviceId">Pi001</span></label>
+  </div>
+
+  <div class="grid" id="pinsGrid">
+    <!-- Pin cards will be created here dynamically -->
+  </div>
+
+  <div class="small">Click a button to send ON/OFF command to Raspberry Pi. Pi will publish back current pin states.</div>
+
+  <h3 style="margin-top:24px;color:#fbbf24">Logs</h3>
+  <div id="logs" class="logs"></div>
+
+<script>
+/* ====== CONFIG ====== */
+const AWS_WS_URL = "ws://13.234.21.33:9001";   // ← change to your AWS IP:9001
+const TOPIC_CONTROL = "myiot/device/control";
+const TOPIC_STATUS  = "myiot/device/status";
+const DEVICE_ID = "Pi001";                     // Dashboard shows/controls this device
+
+// pins you want to control/observe (BCM numbering)
+const PIN_LIST = [17, 18, 27, 22];  // change to the pins you use
+
+/* ====== UI helpers ====== */
+const connEl = document.getElementById('conn');
+const pinsGrid = document.getElementById('pinsGrid');
+const logsEl = document.getElementById('logs');
+document.getElementById('deviceId').textContent = DEVICE_ID;
+
+function log(msg) {
+  const t = new Date().toLocaleTimeString();
+  const node = document.createElement('div');
+  node.textContent = `[${t}] ${msg}`;
+  logsEl.prepend(node);
+  if (logsEl.childNodes.length > 200) logsEl.removeChild(logsEl.lastChild);
+}
+function setConn(ok) {
+  connEl.textContent = ok ? '✅ Connected' : '❌ Disconnected';
+  connEl.className = 'status ' + (ok ? 'connected' : 'disconnected');
+}
+
+/* ====== Build UI Cards for Pins ====== */
+const pinState = {}; // stores latest states for pins
+PIN_LIST.forEach(pin => {
+  const c = document.createElement('div');
+  c.className = 'card';
+  c.id = `card-${pin}`;
+  c.innerHTML = `
+    <div class="title">GPIO ${pin}</div>
+    <div class="pin" id="pinval-${pin}">--</div>
+    <div>
+      <button class="btn on" id="on-${pin}">ON</button>
+      <button class="btn off" id="off-${pin}">OFF</button>
+    </div>
+    <div class="small" id="ts-${pin}">last: -</div>
+  `;
+  pinsGrid.appendChild(c);
+
+  document.getElementById(`on-${pin}`).onclick = ()=> sendCommand(pin,'ON');
+  document.getElementById(`off-${pin}`).onclick = ()=> sendCommand(pin,'OFF');
+});
+
+/* ====== MQTT Connection (mqtt.js) ====== */
+log('Connecting to broker ' + AWS_WS_URL + ' ...');
+const client = mqtt.connect(AWS_WS_URL, {
+  clientId: 'webdash_' + Math.random().toString(16).slice(2,8),
+  reconnectPeriod: 3000
+});
+
+client.on('connect', () => {
+  setConn(true);
+  log('MQTT connected');
+  client.subscribe(TOPIC_STATUS, (err)=> {
+    if(err) log('Sub status failed: ' + err.message); else log('Subscribed to ' + TOPIC_STATUS);
+  });
+});
+
+client.on('reconnect', ()=> log('Reconnecting ...'));
+client.on('close', ()=> setConn(false));
+client.on('offline', ()=> setConn(false));
+client.on('error', (e)=> { log('MQTT error: ' + e.message); });
+
+client.on('message', (topic, message) => {
+  try {
+    const msg = JSON.parse(message.toString());
+    if (topic === TOPIC_STATUS) handleStatusMessage(msg);
+  } catch (e) { log('Invalid JSON: ' + message.toString()); }
+});
+
+/* ====== Send control command ====== */
+function sendCommand(pin, cmd) {
+  const payload = { device_id: DEVICE_ID, pin: pin, command: cmd };
+  client.publish(TOPIC_CONTROL, JSON.stringify(payload));
+  log(`SENT -> ${TOPIC_CONTROL} : ${JSON.stringify(payload)}`);
+}
+
+/* ====== Handle incoming status messages ====== */
+function handleStatusMessage(msg) {
+  if (!msg.device_id || msg.device_id !== DEVICE_ID) return;
+  const now = new Date();
+  if (msg.pins && typeof msg.pins === 'object') {
+    Object.entries(msg.pins).forEach(([pin, state])=>{
+      pinState[pin] = state ? 1 : 0;
+      const valEl = document.getElementById('pinval-'+pin);
+      const tsEl  = document.getElementById('ts-'+pin);
+      if (valEl) valEl.textContent = (state ? 'ON 🔆' : 'OFF 🌑');
+      if (tsEl) tsEl.textContent = 'last: ' + now.toLocaleTimeString();
+    });
+    log(`RECV <- ${TOPIC_STATUS} : pins ${JSON.stringify(msg.pins)}`);
+  } else {
+    log('Status msg missing pins field');
+  }
+}
+
+/* ====== End of dashboard script ====== */
+</script>
+</body>
+</html>
