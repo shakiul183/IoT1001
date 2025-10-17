@@ -1,99 +1,50 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>IoT Control Dashboard</title>
-<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
-<style>
-  body { font-family: Arial; background: #0b1e39; color: #fff; text-align: center; }
-  h1 { color: #4fd1c5; }
-  .device { display: inline-block; margin: 20px; padding: 20px; background: #122b52; border-radius: 12px; width: 250px; }
-  .switch { margin: 15px 0; }
-  label { display: block; margin-bottom: 10px; font-weight: bold; }
-  input[type=checkbox] {
-    width: 50px; height: 25px; appearance: none;
-    background: #444; border-radius: 15px; position: relative;
-    outline: none; cursor: pointer; transition: 0.3s;
-  }
-  input[type=checkbox]:checked { background: #4fd1c5; }
-  input[type=checkbox]::before {
-    content: ''; width: 23px; height: 23px; background: #fff;
-    position: absolute; top: 1px; left: 1px; border-radius: 50%;
-    transition: 0.3s;
-  }
-  input[type=checkbox]:checked::before { left: 26px; }
-</style>
+  <title>IoT Control Dashboard</title>
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <style>
+    body { background: #0a0f24; color: white; font-family: sans-serif; text-align: center; }
+    h1 { color: #00ccff; }
+    .device-group { display: inline-block; margin: 20px; padding: 20px; border: 1px solid #00ccff; border-radius: 12px; }
+    .switch { margin: 10px; display: flex; justify-content: space-between; align-items: center; }
+    button { padding: 8px 20px; background: #00ccff; color: #000; border: none; border-radius: 8px; cursor: pointer; }
+    button.off { background: gray; }
+  </style>
 </head>
 <body>
-<h1>IoT Dashboard – Raspberry Pi & ESP32</h1>
+  <h1>IoT Control Dashboard</h1>
 
-<div class="device" id="pi">
-  <h2>Raspberry Pi</h2>
-  <div class="switch"><label>GPIO 17 <input type="checkbox" id="pi17"></label></div>
-  <div class="switch"><label>GPIO 18 <input type="checkbox" id="pi18"></label></div>
-  <div class="switch"><label>GPIO 27 <input type="checkbox" id="pi27"></label></div>
-</div>
+  <div class="device-group" id="rpi">
+    <h2>Raspberry Pi</h2>
+    <div class="switch"><span>GPIO 17</span><button id="rpi17" onclick="toggle('rpi/gpio/17')">OFF</button></div>
+    <div class="switch"><span>GPIO 27</span><button id="rpi27" onclick="toggle('rpi/gpio/27')">OFF</button></div>
+    <div class="switch"><span>GPIO 22</span><button id="rpi22" onclick="toggle('rpi/gpio/22')">OFF</button></div>
+  </div>
 
-<div class="device" id="esp">
-  <h2>ESP32</h2>
-  <div class="switch"><label>GPIO 16 <input type="checkbox" id="esp16"></label></div>
-  <div class="switch"><label>GPIO 26 <input type="checkbox" id="esp26"></label></div>
-  <div class="switch"><label>GPIO 27 <input type="checkbox" id="esp27"></label></div>
-</div>
+  <div class="device-group" id="esp32">
+    <h2>ESP32</h2>
+    <div class="switch"><span>GPIO 16</span><button id="esp3216" onclick="toggle('esp32/gpio/16')">OFF</button></div>
+    <div class="switch"><span>GPIO 26</span><button id="esp3226" onclick="toggle('esp32/gpio/26')">OFF</button></div>
+    <div class="switch"><span>GPIO 27</span><button id="esp3227" onclick="toggle('esp32/gpio/27')">OFF</button></div>
+  </div>
 
-<script>
-  const broker = "ws://YOUR_AWS_IP:9001";  // use websocket listener from mosquitto.conf
-  const client = mqtt.connect(broker);
+  <script>
+    const client = mqtt.connect("ws://YOUR_AWS_PUBLIC_IP:9001");
 
-  client.on("connect", () => {
-    console.log("Connected to MQTT broker");
-    client.subscribe("myiot/pi/status");
-    client.subscribe("myiot/esp32/status");
-  });
-
-  function sendCommand(device, pin, state) {
-    const topic = device === "pi" ? "myiot/pi/control" : "myiot/esp32/control";
-    const payload = JSON.stringify({
-      device_id: device,
-      pin: pin,
-      command: state ? "ON" : "OFF"
+    client.on("connect", () => {
+      console.log("Connected to MQTT WebSocket!");
+      client.subscribe("rpi/status/#");
+      client.subscribe("esp32/status/#");
     });
-    client.publish(topic, payload);
-    console.log("Sent:", payload);
-  }
 
-  // Attach toggle handlers
-  ["pi17","pi18","pi27"].forEach(id=>{
-    document.getElementById(id).onchange = e=>{
-      const pin = parseInt(id.replace("pi",""));
-      sendCommand("pi", pin, e.target.checked);
-    };
-  });
-  ["esp16","esp26","esp27"].forEach(id=>{
-    document.getElementById(id).onchange = e=>{
-      const pin = parseInt(id.replace("esp",""));
-      sendCommand("esp32", pin, e.target.checked);
-    };
-  });
-
-  // Handle live updates
-  client.on("message", (topic, msg) => {
-    const data = JSON.parse(msg.toString());
-    const pins = data.pins || {};
-    if(topic.includes("pi")){
-      for(const p in pins){
-        const el = document.getElementById("pi"+p);
-        if(el) el.checked = pins[p]==1;
-      }
+    function toggle(topic) {
+      const btn = document.querySelector(`[id='${topic.replace(/\//g, '')}']`);
+      const newState = btn.innerText === "OFF" ? "ON" : "OFF";
+      btn.innerText = newState;
+      btn.classList.toggle("off", newState === "OFF");
+      client.publish(topic, newState);
     }
-    if(topic.includes("esp32")){
-      for(const p in pins){
-        const el = document.getElementById("esp"+p);
-        if(el) el.checked = pins[p]==1;
-      }
-    }
-  });
-</script>
+  </script>
 </body>
 </html>
